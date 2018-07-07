@@ -9,6 +9,7 @@ using System.Threading;
 using System.IO;
 using System.Text;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace WsProxy {
 
@@ -320,12 +321,26 @@ namespace WsProxy {
 
 		protected void Debug (string msg)
 		{
-			Console.WriteLine (msg);
+			if (Debugger.IsAttached)
+			{
+				System.Diagnostics.Debug.WriteLine("Debug: " + msg);
+			}
+			else
+			{
+				Console.WriteLine("Debug: " + msg);
+			}
 		}
 
 		protected void Info (string msg)
 		{
-			Console.WriteLine (msg);
+			if (Debugger.IsAttached)
+			{
+				System.Diagnostics.Debug.WriteLine("Info: " + msg);
+			}
+			else
+			{
+				Console.WriteLine("Info: " + msg);
+			}
 		}
 	}
 }
