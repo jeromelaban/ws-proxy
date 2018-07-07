@@ -6,6 +6,7 @@ using Mono.Cecil.Cil;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using System.Net.Http;
+using Mono.Cecil.Pdb;
 
 namespace WsProxy {
 	public class BreakPointRequest {
@@ -270,16 +271,42 @@ namespace WsProxy {
 				this.id = ++next_id;
 			}
 
-			ReaderParameters rp = new ReaderParameters (/*ReadingMode.Immediate*/);
-			if (pdb != null) {
-				rp.ReadSymbols = true;
-				rp.SymbolReaderProvider = new PortablePdbReaderProvider ();
-				rp.SymbolStream = new MemoryStream (pdb);
+			try
+			{
+				ReaderParameters rp = new ReaderParameters(/*ReadingMode.Immediate*/);
+				if (pdb != null)
+				{
+					rp.ReadSymbols = true;
+					rp.SymbolReaderProvider = new PortablePdbReaderProvider();
+					rp.SymbolStream = new MemoryStream(pdb);
+				}
+
+				rp.ReadingMode = ReadingMode.Immediate;
+				rp.InMemory = true;
+
+				this.image = ModuleDefinition.ReadModule(new MemoryStream(assembly), rp);
+			}
+			catch(BadImageFormatException ex)
+			{
+				Console.WriteLine("Failed to read assembly as portable PDB");
 			}
 
-			rp.InMemory = true;
+			if(this.image == null)
+			{
+				ReaderParameters rp = new ReaderParameters(/*ReadingMode.Immediate*/);
+				if (pdb != null)
+				{
+					rp.ReadSymbols = true;
+					rp.SymbolReaderProvider = new NativePdbReaderProvider();
+					rp.SymbolStream = new MemoryStream(pdb);
+				}
 
-			this.image = ModuleDefinition.ReadModule (new MemoryStream (assembly), rp);
+				rp.ReadingMode = ReadingMode.Immediate;
+				rp.InMemory = true;
+
+				this.image = ModuleDefinition.ReadModule(new MemoryStream(assembly), rp);
+
+			}
 
 			Populate ();
 		}
@@ -306,21 +333,30 @@ namespace WsProxy {
 			foreach (var m in image.GetTypes ().SelectMany (t => t.Methods)) {
 				Document first_doc = null;
 				foreach (var sp in m.DebugInformation.SequencePoints) {
-					if (first_doc == null) {
+					if (first_doc == null && !sp.Document.Url.EndsWith(".g.cs")) {
 						first_doc = sp.Document;
-					} else if (first_doc != sp.Document) {
-						//FIXME this is needed for (c)ctors in corlib
-						throw new Exception ($"Cant handle multi-doc methods in {m}");
 					}
+					//else if (first_doc != sp.Document) {
+					//	//FIXME this is needed for (c)ctors in corlib
+					//	throw new Exception ($"Cant handle multi-doc methods in {m}");
+					//}
+				}
+				
+				if(first_doc == null)
+				{
+					// all generated files
+					first_doc = m.DebugInformation.SequencePoints.FirstOrDefault()?.Document;
 				}
 
-				var src = get_src (first_doc);
-				var mi = new MethodInfo (this, m, src);
-				int mt = (int)m.MetadataToken.RID;
-				this.methods [mt] = mi;
-				if (src != null)
-					src.AddMethod (mi);
-
+				if (first_doc != null)
+				{
+					var src = get_src(first_doc);
+					var mi = new MethodInfo(this, m, src);
+					int mt = (int)m.MetadataToken.RID;
+					this.methods[mt] = mi;
+					if (src != null)
+						src.AddMethod(mi);
+				}
 			}
 		}
 
@@ -338,7 +374,7 @@ namespace WsProxy {
 
 		public MethodInfo GetMethodByToken (int token)
 		{
-			return methods [token];
+			return methods.GetValueOrDefault(token);
 		}
 
 	}
@@ -382,7 +418,7 @@ namespace WsProxy {
 			var asm_files = new List<string> ();
 			var pdb_files = new List<string> ();
 			foreach (var f in loaded_files) {
-				var file_name = f.ToLower ();
+				var file_name = f;
 				if (file_name.EndsWith (".pdb", StringComparison.Ordinal))
 					pdb_files.Add (file_name);
 				else
@@ -391,14 +427,21 @@ namespace WsProxy {
 
 			//FIXME make this parallel
 			foreach (var p in asm_files) {
-				var pdb = pdb_files.FirstOrDefault (n => MatchPdb (p, n));
-				HttpClient h = new HttpClient ();
-				var assembly_bytes = h.GetByteArrayAsync (p).Result;
-				byte[] pdb_bytes = null;
-				if (pdb != null)
-					pdb_bytes = h.GetByteArrayAsync (pdb).Result;
+				try
+				{
+					var pdb = pdb_files.FirstOrDefault(n => MatchPdb(p, n));
+					HttpClient h = new HttpClient();
+					var assembly_bytes = h.GetByteArrayAsync(p).Result;
+					byte[] pdb_bytes = null;
+					if (pdb != null)
+						pdb_bytes = h.GetByteArrayAsync(pdb).Result;
 
-				this.assemblies.Add (new AssemblyInfo (assembly_bytes, pdb_bytes));
+					this.assemblies.Add(new AssemblyInfo(assembly_bytes, pdb_bytes));
+				}
+				catch(Exception e)
+				{
+					Console.WriteLine($"Failed to read {p} ({e.Message})");
+				}
 			}
 		}
 
@@ -513,7 +556,14 @@ namespace WsProxy {
 
 		public string ToUrl (SourceLocation location)
 		{
-			return GetFileById (location.Id).Url;
+			if (location != null)
+			{
+				return GetFileById(location.Id).Url;
+			}
+			else
+			{
+				return "";
+			}
 		}
 	}
 }
