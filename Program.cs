@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.ApplicationInsights.Extensibility;
 using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -13,8 +14,10 @@ namespace WsProxy
     public class Program
     {
         public static void Main(string[] args)
-        {
-		    var host = new WebHostBuilder()
+		{
+			TelemetryConfiguration.Active.DisableTelemetry = true;
+
+			var host = new WebHostBuilder()
 		        .UseSetting(nameof(WebHostBuilderIISExtensions.UseIISIntegration), false.ToString())
 		        .UseKestrel()
 		        .UseContentRoot(Directory.GetCurrentDirectory())
