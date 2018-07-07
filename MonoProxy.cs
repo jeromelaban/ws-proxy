@@ -263,18 +263,20 @@ namespace WsProxy {
 
 						var asm = store.GetAssemblyByName (assembly_name);
 						var method = asm.GetMethodByToken (method_token);
-						var location = method.GetLocationByIl (il_pos);
+						var location = method?.GetLocationByIl (il_pos);
+
+						var methodName = method?.Name ?? "unknown_method";
 
 						Info ($"frame il offset: {il_pos} method token: {method_token} assembly name: {assembly_name}");
-						Info ($"\tmethod {method.Name} location: {location}");
+						Info ($"\tmethod {methodName} location: {location}");
 						frames.Add (new Frame (method, location, frame_id));
 
 						callFrames.Add (JObject.FromObject (new {
-							functionName = method.Name,
+							functionName = methodName,
 
-							functionLocation = method.StartLocation.ToJObject (),
+							functionLocation = method?.StartLocation.ToJObject (),
 
-							location = location.ToJObject (),
+							location = location?.ToJObject (),
 
 							url = store.ToUrl (location),
 
@@ -287,9 +289,9 @@ namespace WsProxy {
 										description = "Object",
 										objectId = $"dotnet:scope:{frame_id}"
 									},
-									name = method.Name,
-									startLocation = method.StartLocation.ToJObject (),
-									endLocation = method.EndLocation.ToJObject (),
+									name = methodName,
+									startLocation = method?.StartLocation.ToJObject (),
+									endLocation = method?.EndLocation.ToJObject (),
 								}
 							},
 
@@ -419,7 +421,7 @@ namespace WsProxy {
 
 		async Task<Result> EnableBreakPoint (Breakpoint bp, CancellationToken token)
 		{
-			var asm_name = bp.Location.CliLocation.Method.Assembly.Name.ToLower ();
+			var asm_name = bp.Location.CliLocation.Method.Assembly.Name;
 			var method_token = bp.Location.CliLocation.Method.Token;
 			var il_offset = bp.Location.CliLocation.Offset;
 
@@ -445,6 +447,7 @@ namespace WsProxy {
 
 		async Task RuntimeReady (CancellationToken token)
 		{
+			Debug("-> RuntimeReady()");
 
 			var o = JObject.FromObject (new {
 				expression = MonoCommands.GET_LOADED_FILES,
@@ -458,7 +461,10 @@ namespace WsProxy {
 			var the_pdbs = the_value?.ToObject<string[]> ();
 			this.store = new DebugStore (the_pdbs);
 
+			Debug("RuntimeReady.GotPDBs");
+
 			foreach (var s in store.AllSources ()) {
+				Debug($"RuntimeReady.Source({s.FileName})");
 				var ok = JObject.FromObject (new {
 					scriptId = s.SourceId.ToString (),
 					url = s.Url,
@@ -478,12 +484,20 @@ namespace WsProxy {
 				returnByValue = true,
 			});
 
-			var clear_result = await SendCommand ("Runtime.evaluate", o, token);
-			if (clear_result.IsErr) {
-				Debug ($"Failed to clear breakpoints due to {clear_result}");
+			try
+			{
+				var clear_result = await SendCommand("Runtime.evaluate", o, token);
+				if (clear_result.IsErr)
+				{
+					Debug($"Failed to clear breakpoints due to {clear_result}");
+				}
+			}
+			catch (Exception e)
+			{
+				Debug($"Failed to clear breakpoints");
 			}
 
-
+			Debug("Runtime is ready");
 			runtime_ready = true;
 
 			foreach (var bp in breakpoints) {
@@ -499,6 +513,8 @@ namespace WsProxy {
 					bp.State = BreakPointState.Disabled;
 				}
 			}
+
+			Debug("<- RuntimeReady()");
 		}
 
 		async Task SetBreakPoint (int msg_id, BreakPointRequest req, CancellationToken token)
